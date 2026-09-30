@@ -1,4 +1,4 @@
-// SKCT 모의고사 도구: 타이머(15분 역산/스톱워치) + 메모장/그림판 + 계산기(SKCT 배치, 숫자패드 고정)
+// SKCT 모의고사 도구: 타이머(15분 역산) + 메모장/그림판 + 계산기(SKCT 배치, 숫자패드 고정)
 // 빌드: csc /nologo /target:winexe /codepage:65001 /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:SKCTAddon.exe SKCTAddon.cs
 using System;
 using System.Collections.Generic;
@@ -35,8 +35,6 @@ static class Theme
     public static readonly Color OpText = Color.FromArgb(134, 142, 150);
     public static readonly Color Equal = Color.FromArgb(73, 80, 87);
     public static readonly Color EqualHover = Color.FromArgb(52, 58, 64);
-    public static readonly Color Pill = Color.FromArgb(108, 117, 125);
-    public static readonly Color PillHover = Color.FromArgb(84, 91, 98);
 
     public static float S = 1f;   // DPI 배율
     public static int Px(float v) { return (int)Math.Round(v * S); }
@@ -53,6 +51,7 @@ class FlatButton : Control
     public Color Base = Theme.Btn;
     public Color Hover = Theme.BtnHover;
     public int Radius = Theme.Px(4);
+    public Color BorderColor = Color.Empty;   // 비어 있으면 테두리 없음
     public event EventHandler Pressed;
 
     protected bool active, over, down;
@@ -109,6 +108,11 @@ class FlatButton : Control
         using (GraphicsPath p = RoundRect(new Rectangle(0, 0, Width - 1, Height - 1), Radius))
         using (SolidBrush b = new SolidBrush(bg))
             g.FillPath(b, p);
+        if (BorderColor != Color.Empty && !active)
+        {
+            g.SmoothingMode = SmoothingMode.None;
+            using (Pen pen = new Pen(BorderColor)) g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+        }
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, fg,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
@@ -124,29 +128,6 @@ class FlatButton : Control
         p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
         p.CloseFigure();
         return p;
-    }
-}
-
-// 글자형 탭: 선택되면 굵은 글씨 + 밑줄
-class TabButton : FlatButton
-{
-    public TabButton(string text) : base(text) { }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        Graphics g = e.Graphics;
-        g.Clear(Parent != null ? Parent.BackColor : Theme.Panel);
-        using (Font f = new Font("맑은 고딕", 10f, active ? FontStyle.Bold : FontStyle.Regular))
-        {
-            Color fg = active ? Theme.Text : (over ? Theme.OpText : Theme.SubText);
-            Size sz = TextRenderer.MeasureText(g, Text, f, Size.Empty, TextFormatFlags.NoPadding);
-            int x = (Width - sz.Width) / 2;
-            int y = (Height - Theme.Px(3) - sz.Height) / 2;
-            TextRenderer.DrawText(g, Text, f, new Point(x, y), fg, TextFormatFlags.NoPadding);
-            if (active)
-                using (SolidBrush b = new SolidBrush(Theme.Text))
-                    g.FillRectangle(b, x, Height - Theme.Px(2), sz.Width, Theme.Px(2));
-        }
     }
 }
 
@@ -310,8 +291,7 @@ class MemoPanel : Panel
     public const int HeaderHeight = 44;
 
     readonly Panel header;
-    readonly TabButton tabText, tabDraw;
-    readonly FlatButton clearBtn;
+    readonly FlatButton tabText, tabDraw, clearBtn;
     readonly Canvas canvas;
     readonly Panel textHost;
     readonly CueTextBox text;
@@ -345,13 +325,11 @@ class MemoPanel : Panel
         header.Dock = DockStyle.Top;
         header.Height = Theme.Px(HeaderHeight);
         header.BackColor = Theme.Panel;
-        tabText = new TabButton("메모장");
-        tabDraw = new TabButton("그림판");
-        clearBtn = new FlatButton("그림판 지우기");
-        clearBtn.Base = Theme.Pill;
-        clearBtn.Hover = Theme.PillHover;
-        clearBtn.ForeColor = Color.White;
-        clearBtn.Font = new Font("맑은 고딕", 9f, FontStyle.Bold);
+        // 사각형 버튼: [메모장|그림판] 붙은 전환 버튼 + 오른쪽 전체 지우기
+        tabText = SquareButton("메모장");
+        tabDraw = SquareButton("그림판");
+        clearBtn = SquareButton("전체 지우기");
+        clearBtn.ForeColor = Theme.Text;
         tabText.Pressed += delegate { SetMode(false); };
         tabDraw.Pressed += delegate { SetMode(true); };
         clearBtn.Pressed += delegate { ClearCurrent(); };
@@ -368,6 +346,18 @@ class MemoPanel : Panel
         SetMode(true);
     }
 
+    static FlatButton SquareButton(string text)
+    {
+        FlatButton b = new FlatButton(text);
+        b.Radius = 0;
+        b.Base = Color.White;
+        b.Hover = Theme.KeyWhiteHover;
+        b.BorderColor = Theme.Border;
+        b.ForeColor = Theme.OpText;
+        b.Font = new Font("맑은 고딕", 9.5f);
+        return b;
+    }
+
     public bool DrawMode { get { return drawMode; } }
     public bool Typing { get { return text.Focused; } }
 
@@ -378,7 +368,6 @@ class MemoPanel : Panel
         textHost.Visible = !draw;
         tabDraw.Active = draw;
         tabText.Active = !draw;
-        clearBtn.Text = draw ? "그림판 지우기" : "메모장 지우기";
         FocusCurrent();
     }
 
@@ -395,12 +384,10 @@ class MemoPanel : Panel
 
     void LayoutHeader()
     {
-        int th = Theme.Px(34), tw = Theme.Px(52);
-        tabText.SetBounds(0, 0, tw, th);
-        tabDraw.SetBounds(tw + Theme.Px(8), 0, tw, th);
-        int ch = Theme.Px(28), cw = Theme.Px(104);
-        clearBtn.SetBounds(header.Width - cw, (th - ch) / 2, cw, ch);
-        clearBtn.Radius = ch / 2;
+        int h = Theme.Px(32), tw = Theme.Px(64), cw = Theme.Px(88);
+        tabText.SetBounds(0, 0, tw, h);
+        tabDraw.SetBounds(tw - 1, 0, tw, h);   // 테두리 한 줄을 겹쳐서 붙인 버튼처럼
+        clearBtn.SetBounds(header.Width - cw, 0, cw, h);
     }
 }
 
@@ -776,14 +763,13 @@ class MainForm : Form
     readonly ToolTip tip = new ToolTip();
     readonly Panel bar;
     readonly Label timeLabel;
-    readonly FlatButton modeBtn, playBtn, resetBtn, pinBtn;
+    readonly FlatButton playBtn, resetBtn, pinBtn;
     readonly MemoPanel memo;
     readonly CalcPanel calc;
     readonly SplitContainer split;
     int calcHeight;
     bool startDraw = true;
     bool restoredBounds;
-    bool countdown = true;   // 켤 때마다 역산으로 시작
     bool finished;           // 역산이 0에 도달
     bool numpadOn = true;    // 숫자패드 고정 (저장됨)
 
@@ -798,32 +784,25 @@ class MainForm : Form
         // 타이머 바
         bar = new Panel();
         bar.Dock = DockStyle.Top;
-        bar.Height = Theme.Px(56);
+        bar.Height = Theme.Px(64);
         bar.BackColor = Theme.Bar;
         timeLabel = new Label();
         timeLabel.AutoSize = false;
-        timeLabel.Font = new Font("Segoe UI Semibold", 20f);
+        timeLabel.Font = new Font("Segoe UI Semibold", 30f);
         timeLabel.ForeColor = Theme.Text;
         timeLabel.BackColor = Theme.Bar;
         timeLabel.TextAlign = ContentAlignment.MiddleLeft;
-        modeBtn = new FlatButton("역산");
-        modeBtn.Base = Color.White;
-        modeBtn.Hover = Theme.BtnHover;
-        modeBtn.Font = new Font("맑은 고딕", 9f);
         playBtn = IconButton(PlayGlyph);
         playBtn.Base = Theme.Accent; playBtn.Hover = Theme.AccentHover; playBtn.ForeColor = Color.White;
         resetBtn = IconButton("");
         pinBtn = IconButton("");
-        modeBtn.Pressed += delegate { ToggleMode(); };
         playBtn.Pressed += delegate { TogglePlay(); };
         resetBtn.Pressed += delegate { ResetTime(); };
         pinBtn.Pressed += delegate { TopMost = !TopMost; pinBtn.Active = TopMost; };
-        tip.SetToolTip(modeBtn, "역산(" + CountdownMinutes + "분) ↔ 스톱워치 전환");
         tip.SetToolTip(playBtn, "시작 / 일시정지");
-        tip.SetToolTip(resetBtn, "처음으로 초기화");
+        tip.SetToolTip(resetBtn, CountdownMinutes + "분으로 초기화");
         tip.SetToolTip(pinBtn, "항상 위에 표시");
         bar.Controls.Add(timeLabel);
-        bar.Controls.Add(modeBtn);
         bar.Controls.Add(playBtn);
         bar.Controls.Add(resetBtn);
         bar.Controls.Add(pinBtn);
@@ -871,33 +850,21 @@ class MainForm : Form
     static FlatButton IconButton(string glyph)
     {
         FlatButton b = new FlatButton(glyph);
-        b.Font = new Font("Segoe MDL2 Assets", 12f);
+        b.Font = new Font("Segoe MDL2 Assets", 9f);
         b.Base = Color.White;
         b.Hover = Theme.BtnHover;
         return b;
     }
 
+    // 타이머 버튼은 작은 원형으로 (아래 사각형 버튼들과 헷갈리지 않게)
     void LayoutBar(Panel bar)
     {
-        int p = Theme.Px(8), s = bar.Height - 2 * p, gap = Theme.Px(6);
-        pinBtn.SetBounds(bar.Width - p - s, p, s, s);
-        resetBtn.SetBounds(pinBtn.Left - gap - s, p, s, s);
-        playBtn.SetBounds(resetBtn.Left - gap - s, p, s, s);
+        int s = Theme.Px(28), gap = Theme.Px(6), y = (bar.Height - s) / 2;
+        pinBtn.SetBounds(bar.Width - Theme.Px(14) - s, y, s, s);
+        resetBtn.SetBounds(pinBtn.Left - gap - s, y, s, s);
+        playBtn.SetBounds(resetBtn.Left - gap - s, y, s, s);
         pinBtn.Radius = resetBtn.Radius = playBtn.Radius = s / 2;
-        int mw = Theme.Px(64), mh = Theme.Px(30);
-        modeBtn.SetBounds(playBtn.Left - gap - mw, (bar.Height - mh) / 2, mw, mh);
-        timeLabel.SetBounds(Theme.Px(12), 0, Math.Max(0, modeBtn.Left - Theme.Px(12)), bar.Height);
-    }
-
-    void ToggleMode()
-    {
-        countdown = !countdown;
-        modeBtn.Text = countdown ? "역산" : "스톱워치";
-        sw.Reset();
-        tick.Stop();
-        finished = false;
-        playBtn.Text = PlayGlyph;
-        UpdateTime();
+        timeLabel.SetBounds(Theme.Px(10), 0, Math.Max(0, playBtn.Left - Theme.Px(18)), bar.Height);
     }
 
     void TogglePlay()
@@ -922,21 +889,19 @@ class MainForm : Form
 
     void UpdateTime()
     {
-        TimeSpan t;
-        if (countdown)
+        TimeSpan left = TimeSpan.FromMinutes(CountdownMinutes) - sw.Elapsed;
+        if (left <= TimeSpan.Zero)
         {
-            TimeSpan left = TimeSpan.FromMinutes(CountdownMinutes) - sw.Elapsed;
-            if (left <= TimeSpan.Zero)
-            {
-                left = TimeSpan.Zero;
-                if (sw.IsRunning) { sw.Stop(); tick.Stop(); playBtn.Text = PlayGlyph; }
-                finished = true;
-            }
-            t = TimeSpan.FromSeconds(Math.Ceiling(left.TotalSeconds));
+            left = TimeSpan.Zero;
+            if (sw.IsRunning) { sw.Stop(); tick.Stop(); playBtn.Text = PlayGlyph; }
+            finished = true;
         }
-        else t = sw.Elapsed;
+        TimeSpan t = TimeSpan.FromSeconds(Math.Ceiling(left.TotalSeconds));
 
-        string s = string.Format("{0:00}:{1:00}:{2:00}", (int)t.TotalHours, t.Minutes, t.Seconds);
+        // 15:00 형식 (역산 시간을 1시간 이상으로 바꾸면 1:00:00 형식)
+        string s = t.TotalHours >= 1
+            ? string.Format("{0}:{1:00}:{2:00}", (int)t.TotalHours, t.Minutes, t.Seconds)
+            : string.Format("{0:00}:{1:00}", t.Minutes, t.Seconds);
         if (timeLabel.Text != s) timeLabel.Text = s;
 
         // 시간 종료: 빨간색으로 표시
