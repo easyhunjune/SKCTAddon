@@ -247,6 +247,20 @@ class Canvas : Control
         if (e.Button == MouseButtons.Left) drawing = false;
     }
 
+    // 버튼을 뗀 신호를 놓친 경우(다른 창이 마우스를 가져감) 그리기를 끝냄
+    protected override void OnMouseCaptureChanged(EventArgs e)
+    {
+        base.OnMouseCaptureChanged(e);
+        drawing = false;
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        // WM_MOUSEMOVE에 왼쪽 버튼(MK_LBUTTON)이 없으면 이미 손을 뗀 것
+        if (m.Msg == 0x0200 && drawing && (m.WParam.ToInt64() & 0x0001) == 0) drawing = false;
+        base.WndProc(ref m);
+    }
+
     void Stroke(Point a, Point b)
     {
         using (Graphics g = Graphics.FromImage(bmp))
@@ -771,8 +785,9 @@ class MainForm : Form
     int calcHeight;
     bool startDraw = true;
     bool restoredBounds;
+    bool layoutReady;        // OnLoad에서 배치를 마친 뒤부터 계산기 높이를 기억
     bool finished;           // 역산이 0에 도달
-    bool numpadOn = true;    // 숫자패드 고정 (저장됨)
+    bool numpadOn;           // 숫자패드 고정 (저장됨). 처음에는 꺼짐: 켜면 다른 창의 Backspace, Esc도 가져가므로
 
     public MainForm()
     {
@@ -824,6 +839,7 @@ class MainForm : Form
         split.TabStop = false;
         split.Panel1.Controls.Add(memo);
         split.Panel2.Controls.Add(calc);
+        split.SplitterMoved += delegate { RememberCalcHeight(); };
 
         // 오른쪽 패널: 회색 바탕 + 여백 (시험 화면의 메모장/계산기 영역)
         Panel content = new Panel();
@@ -933,6 +949,7 @@ class MainForm : Form
         pinBtn.Active = TopMost;
         memo.SetMode(startDraw);
         SetNumpadHook(numpadOn);
+        layoutReady = true;
     }
 
     // ── 숫자패드 고정: 다른 창이 활성이어도 숫자패드 키는 계산기로 ──
@@ -970,17 +987,15 @@ class MainForm : Form
 
     IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && WindowState != FormWindowState.Minimized)
+        // 이 창이 앞에 있으면 가로채지 않음: 창 안의 키 입력은 ProcessCmdKey가 메모장과 계산기로 나눠 보냄
+        if (nCode >= 0 && WindowState != FormWindowState.Minimized && GetForegroundWindow() != Handle)
         {
             KBDLLHOOKSTRUCT k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
             string key = HookKey((int)k.vkCode, (int)k.flags);
             bool alt = (k.flags & 0x20) != 0;
             bool ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
-            // 이 창의 메모장에 타이핑 중이면 Backspace와 Esc는 메모장이 받게 둠
-            bool editKey = k.vkCode == 0x08 || k.vkCode == 0x1B;
-            bool memoTyping = GetForegroundWindow() == Handle && memo.Typing;
             // Alt+숫자패드(특수문자 입력), Ctrl 조합은 그대로 통과
-            if (key != null && !alt && !ctrl && !(editKey && memoTyping))
+            if (key != null && !alt && !ctrl)
             {
                 int msg = wParam.ToInt32();
                 if (msg == 0x0100 || msg == 0x0104) calc.Press(key);   // 눌림에서만 입력
@@ -1094,7 +1109,8 @@ class MainForm : Form
                     Rectangle r = new Rectangle(int.Parse(a[0]), int.Parse(a[1]), int.Parse(a[2]), int.Parse(a[3]));
                     if (OnScreen(r)) { bounds = r; restoredBounds = true; }
                 }
-                if (d.TryGetValue("calc", out v)) calcHeight = int.Parse(v);
+                int ch;
+                if (d.TryGetValue("calc", out v) && int.TryParse(v, out ch) && ch > 0) calcHeight = ch;
                 if (d.TryGetValue("topmost", out v)) TopMost = v == "1";
                 if (d.TryGetValue("mode", out v)) startDraw = v != "text";
                 if (d.TryGetValue("numpad", out v)) numpadOn = v != "0";
@@ -1115,18 +1131,26 @@ class MainForm : Form
         return false;
     }
 
+    // 계산기 칸 높이 기억. 최소화 중에는 칸이 찌그러져 있으므로 갱신하지 않음
+    void RememberCalcHeight()
+    {
+        if (!layoutReady || WindowState == FormWindowState.Minimized) return;
+        int ch = split.Height - split.SplitterDistance - split.SplitterWidth;
+        if (ch > 0) calcHeight = ch;
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         base.OnFormClosing(e);
         try
         {
             Rectangle b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
-            int ch = split.Height - split.SplitterDistance - split.SplitterWidth;
+            RememberCalcHeight();
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile));
             File.WriteAllLines(SettingsFile, new string[] {
                 "v=2",
                 "bounds=" + b.X + "," + b.Y + "," + b.Width + "," + b.Height,
-                "calc=" + ch,
+                "calc=" + calcHeight,
                 "topmost=" + (TopMost ? "1" : "0"),
                 "mode=" + (memo.DrawMode ? "draw" : "text"),
                 "numpad=" + (numpadOn ? "1" : "0") });
