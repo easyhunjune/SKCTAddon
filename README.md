@@ -50,6 +50,10 @@ SKCT 온라인 모의고사를 풀 때 화면 오른쪽에 띄워 두는 보조 
 
 윈도우에 기본으로 들어 있는 .NET Framework 4로 만들어서 따로 설치할 것이 없습니다.
 
+[Releases](https://github.com/easyhunjune/SKCTAddon/releases/latest)에서 `SKCTAddon.exe`를 받아 바로 실행하면 됩니다. 서명하지 않은 exe라서 "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누릅니다.
+
+직접 빌드해서 쓰려면 다음 순서를 따릅니다.
+
 1. `build.bat`를 실행하면 같은 폴더에 `SKCTAddon.exe`가 생깁니다.
 2. `SKCTAddon.exe`를 실행합니다.
 
