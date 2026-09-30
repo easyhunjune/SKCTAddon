@@ -674,12 +674,13 @@ class CalcPanel : Panel
         numpadBtn.Hover = Theme.KeyWhiteHover;
         numpadBtn.ForeColor = Theme.OpText;
         numpadBtn.Font = new Font("맑은 고딕", 8.5f, FontStyle.Bold);
+        numpadBtn.Radius = 0;
+        numpadBtn.BorderColor = Theme.Border;
         display.Controls.Add(numpadBtn);
         display.Resize += delegate
         {
             int w = Theme.Px(96), h = Theme.Px(24);
             numpadBtn.SetBounds(display.Width - w, Theme.Px(1), w, h);
-            numpadBtn.Radius = h / 2;
         };
 
         DBTable grid = new DBTable();
@@ -813,7 +814,7 @@ class MainForm : Form
         calc = new CalcPanel();
         calc.Dock = DockStyle.Fill;
         calc.NumpadButton.Pressed += delegate { numpadOn = hook == IntPtr.Zero; SetNumpadHook(numpadOn); };
-        tip.SetToolTip(calc.NumpadButton, "켜면 다른 창을 보고 있어도 숫자패드 입력은 계산기로 들어갑니다 (NumLock 켜짐 필요)");
+        tip.SetToolTip(calc.NumpadButton, "켜면 다른 창을 보고 있어도 숫자패드, Backspace, Esc 입력은 계산기로 들어갑니다 (NumLock 켜짐 필요)");
         split = new SplitContainer();
         split.Dock = DockStyle.Fill;
         split.Orientation = Orientation.Horizontal;
@@ -946,6 +947,7 @@ class MainForm : Form
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
 
     LowLevelKeyboardProc hookProc;   // GC에 수거되지 않게 참조 유지
@@ -971,10 +973,14 @@ class MainForm : Form
         if (nCode >= 0 && WindowState != FormWindowState.Minimized)
         {
             KBDLLHOOKSTRUCT k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-            string key = NumpadKey((int)k.vkCode, (int)k.flags);
+            string key = HookKey((int)k.vkCode, (int)k.flags);
             bool alt = (k.flags & 0x20) != 0;
             bool ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
-            if (key != null && !alt && !ctrl)   // Alt+숫자패드(특수문자 입력), Ctrl 조합은 그대로 통과
+            // 이 창의 메모장에 타이핑 중이면 Backspace와 Esc는 메모장이 받게 둠
+            bool editKey = k.vkCode == 0x08 || k.vkCode == 0x1B;
+            bool memoTyping = GetForegroundWindow() == Handle && memo.Typing;
+            // Alt+숫자패드(특수문자 입력), Ctrl 조합은 그대로 통과
+            if (key != null && !alt && !ctrl && !(editKey && memoTyping))
             {
                 int msg = wParam.ToInt32();
                 if (msg == 0x0100 || msg == 0x0104) calc.Press(key);   // 눌림에서만 입력
@@ -984,8 +990,8 @@ class MainForm : Form
         return CallNextHookEx(hook, nCode, wParam, lParam);
     }
 
-    // NumLock이 켜진 숫자패드 키만 해당. 일반 숫자열·메인 Enter는 제외
-    public static string NumpadKey(int vk, int flags)
+    // 가로채는 키: NumLock이 켜진 숫자패드 키 + Backspace, Esc. 일반 숫자열과 메인 Enter는 제외
+    public static string HookKey(int vk, int flags)
     {
         if (vk >= 0x60 && vk <= 0x69) return ((char)('0' + vk - 0x60)).ToString();
         switch (vk)
@@ -996,6 +1002,8 @@ class MainForm : Form
             case 0x6E: return ".";
             case 0x6F: return "/";
             case 0x0D: return (flags & 0x01) != 0 ? "=" : null;   // 확장 플래그 = 숫자패드 Enter
+            case 0x08: return "BS";   // Backspace
+            case 0x1B: return "C";    // Esc
         }
         return null;
     }
